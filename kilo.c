@@ -4,10 +4,18 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <errno.h>
+#include <sys/ioctl.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-struct termios orig_termios;
+struct editorConfig {
+    int screenrows;
+    int screencols;
+    struct termios orig_termios;
+};
+
+struct editorConfig E;
+
 
 void die(const char* s) {
     write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -17,17 +25,19 @@ void die(const char* s) {
     exit(1);
 }
 
+
+
 void disableRawMode() {
-    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) {
+    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1) {
         die("tcsetattr");
     }
 }
 
 void enableRawMode() {
-    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) die("tcsetattr");
+    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1) die("tcsetattr");
     atexit(disableRawMode);
 
-    struct termios raw = orig_termios;
+    struct termios raw = E.orig_termios;
     raw.c_iflag &= ~(BRKINT| ICRNL | IXON | ISTRIP | INPCK);
     raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
@@ -36,6 +46,13 @@ void enableRawMode() {
     raw.c_cc[VTIME] = 1;
 
    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
+}
+
+void editorDrawRows() {
+    int y;
+    for (y = 0; y < E.screenrows; y++) {
+        write(STDOUT_FILENO, "~\r\n", 3);
+    }
 }
 
 char editorReadKey() {
@@ -47,8 +64,23 @@ char editorReadKey() {
     return c;
 }
 
+int getWindowSize(int* rows, int* cols) {
+    struct winsize ws;
+
+    if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        return -1;
+    } else {
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+        return 0;
+    }
+}
+
 void editorRefreshScreen() {
     write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
+    editorDrawRows();
     write(STDOUT_FILENO, "\x1b[H", 3);
 }
 
@@ -64,8 +96,13 @@ void editorProcessKeypress() {
     }
 }
 
+void initEditor() {
+    if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
+}
+
 int main() {
     enableRawMode();
+    initEditor();
 
     while(1) {
         editorRefreshScreen();
